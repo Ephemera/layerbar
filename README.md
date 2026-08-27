@@ -54,7 +54,7 @@ Use the menu bar icon's **Open Config** / **Reload Config** items to edit and ap
 
 ## CI
 
-Pushes to `main` build the app bundle on a macOS runner and upload it as a `LayerBar` artifact (zip). Downloaded bundles are quarantined by Gatekeeper; clear it with:
+Pushes to `main` build the app bundle on a macOS runner and upload it as a `LayerBar` artifact (zip). Pushing a `v*` tag (e.g. `v1.0`) additionally publishes the zip as a GitHub Release with auto-generated notes. Downloaded bundles are quarantined by Gatekeeper; clear it with:
 
 ```sh
 xattr -d com.apple.quarantine LayerBar.app
