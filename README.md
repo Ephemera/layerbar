@@ -15,12 +15,62 @@ ZMK firmware ──(raw HID report)──▶ LayerBar ──▶ NSStatusItem (me
 
 ## Firmware setup
 
-Add the module to your ZMK build and enable it in your keyboard `.conf`:
+ZMK itself has no built-in way to report the active layer to the host. That part is provided by the
+[zmk-feature-appcompanion](https://github.com/Ephemera/zmk-feature-appcompanion) module
+(a fork of [maatthc/zmk-feature-appcompanion](https://github.com/maatthc/zmk-feature-appcompanion)
+with a CMake fix so it builds as an external `ZMK_EXTRA_MODULES` module).
+
+### 1. Add the module to the build
+
+With a [miryoku_zmk](https://github.com/manna-harbour/miryoku_zmk)-style workflow, pass it via the `modules` input:
+
+```yaml
+jobs:
+  build:
+    uses: ./.github/workflows/main.yml
+    secrets: inherit
+    with:
+      board: '["planck//zmk"]'
+      modules: '["Ephemera/zmk-feature-appcompanion/main"]'
+```
+
+With a plain zmk-config, add it to `config/west.yml` instead:
+
+```yaml
+manifest:
+  remotes:
+    - name: ephemera
+      url-base: https://github.com/Ephemera
+  projects:
+    - name: zmk-feature-appcompanion
+      remote: ephemera
+      revision: main
+```
+
+### 2. Enable it in your keyboard `.conf`
 
 ```ini
+# a second USB HID interface for the raw reports (HID_0 is the keyboard itself)
 CONFIG_USB_HID_DEVICE_COUNT=2
 CONFIG_ZMK_LAYER_STATUS_USB_HID=y
 ```
+
+The vendor usage page/usage default to `0xFF60`/`0x61` and can be overridden with
+`CONFIG_ZMK_LAYER_STATUS_USB_HID_USAGE_PAGE` / `CONFIG_ZMK_LAYER_STATUS_USB_HID_USAGE`
+(update the app config to match).
+
+### Report protocol
+
+On every layer state change the firmware sends one 32-byte input report on the vendor interface:
+
+| bytes | content |
+|---|---|
+| 0–23 | `0x00` |
+| 24 | `0x90` marker |
+| 25 | active layer index (highest active layer) |
+| 26–31 | `0x00` |
+
+Notes: USB only (the module's BLE variant embeds the layer into the keyboard report instead, which LayerBar does not read). On a split keyboard the module must run on the central side.
 
 ## Build & install
 
