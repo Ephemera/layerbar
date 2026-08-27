@@ -109,3 +109,7 @@ Pushes to `main` build the app bundle on a macOS runner and upload it as a `Laye
 ```sh
 xattr -d com.apple.quarantine LayerBar.app
 ```
+
+## License
+
+[MIT](LICENSE)
