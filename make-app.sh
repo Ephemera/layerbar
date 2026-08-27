@@ -1,11 +1,12 @@
 #!/bin/sh
-# Build LayerBar.app and install it to ~/Applications.
+# Build LayerBar.app and install it to ~/Applications
+# (or to $LAYERBAR_APP_DIR if set, e.g. in CI).
 set -e
 cd "$(dirname "$0")"
 
 swift build -c release
 
-APP="$HOME/Applications/LayerBar.app"
+APP="${LAYERBAR_APP_DIR:-$HOME/Applications}/LayerBar.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"
 
