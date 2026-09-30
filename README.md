@@ -92,13 +92,18 @@ Builds a release binary and installs `LayerBar.app` into `~/Applications` (ad-ho
     "usage": "0x61",
     "prefix": "⌨ ",
     "disconnectedText": "–",
-    "layers": ["Base", "QWERTY", "Tap", "Button", "Nav", "Mouse", "Media", "Num", "Sym", "Fun"]
+    "layers": ["Base", "QWERTY", "Tap", "Button", "Nav", "Mouse", "Media", "Num", "Sym", "Fun"],
+    "inputSourceColors": {
+        "org.youknowone.inputmethod.Gureum": "#FF8C00",
+        "com.apple.inputmethod.Korean": "#FF8C00"
+    }
 }
 ```
 
 - `layers` — display names by layer index (rename freely, e.g. `"Colemak Mod-DH"`)
 - `prefix` / `disconnectedText` — menu bar text decoration
 - `vendorId` / `productId` / `usagePage` / `usage` — match a different keyboard without code changes (hex strings or decimal numbers)
+- `inputSourceColors` — while a matching input source is selected, the text is drawn on a colored pill (`#RRGGBB` or `#RRGGBBAA`); other sources show plain text. Keys match input source ID prefixes (longest wins), so a bundle ID covers all of its input modes. The menu shows the current input source ID.
 
 Use the menu bar icon's **Open Config** / **Reload Config** items to edit and apply without restarting.
 
