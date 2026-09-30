@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import IOKit.hid
 
 // MARK: - Config
@@ -31,6 +32,17 @@ struct ConfigFile: Decodable {
     var prefix: String?
     var disconnectedText: String?
     var layers: [String]?
+    var inputSourceColors: [String: String]?
+}
+
+/// Accepts "#RRGGBB" or "#RRGGBBAA".
+func parseHexColor(_ hex: String) -> NSColor? {
+    var text = hex.trimmingCharacters(in: .whitespaces)
+    if text.hasPrefix("#") { text.removeFirst() }
+    guard text.count == 6 || text.count == 8, var value = UInt32(text, radix: 16) else { return nil }
+    if text.count == 6 { value = value << 8 | 0xFF }
+    func channel(_ shift: UInt32) -> CGFloat { CGFloat(value >> shift & 0xFF) / 255 }
+    return NSColor(srgbRed: channel(24), green: channel(16), blue: channel(8), alpha: channel(0))
 }
 
 struct Settings {
@@ -42,6 +54,11 @@ struct Settings {
     var disconnectedText = "–"
     // miryoku layer order (miryoku_layer_list.h)
     var layers = ["Base", "QWERTY", "Tap", "Button", "Nav", "Mouse", "Media", "Num", "Sym", "Fun"]
+    // input source ID prefix -> pill background; unlisted sources render as plain text
+    var inputSourceColors: [String: NSColor] = [
+        "org.youknowone.inputmethod.Gureum": NSColor(srgbRed: 1, green: 0.55, blue: 0, alpha: 1),
+        "com.apple.inputmethod.Korean": NSColor(srgbRed: 1, green: 0.55, blue: 0, alpha: 1),
+    ]
 
     static let fileURL = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".config/layerbar/config.json")
@@ -54,7 +71,11 @@ struct Settings {
         "usage": "0x61",
         "prefix": "⌨ ",
         "disconnectedText": "–",
-        "layers": ["Base", "QWERTY", "Tap", "Button", "Nav", "Mouse", "Media", "Num", "Sym", "Fun"]
+        "layers": ["Base", "QWERTY", "Tap", "Button", "Nav", "Mouse", "Media", "Num", "Sym", "Fun"],
+        "inputSourceColors": {
+            "org.youknowone.inputmethod.Gureum": "#FF8C00",
+            "com.apple.inputmethod.Korean": "#FF8C00"
+        }
     }
     """
 
@@ -76,6 +97,13 @@ struct Settings {
             if let v = file.prefix { settings.prefix = v }
             if let v = file.disconnectedText { settings.disconnectedText = v }
             if let v = file.layers, !v.isEmpty { settings.layers = v }
+            if let v = file.inputSourceColors {
+                settings.inputSourceColors = v.compactMapValues { hex in
+                    let color = parseHexColor(hex)
+                    if color == nil { NSLog("invalid color, ignored: %@", hex) }
+                    return color
+                }
+            }
         } catch {
             NSLog("config parse error, using defaults: %@", "\(error)")
         }
@@ -84,6 +112,36 @@ struct Settings {
 
     func name(forLayer index: Int) -> String {
         index < layers.count ? layers[index] : "L\(index)"
+    }
+
+    /// Longest matching prefix wins, so a bundle ID covers all of its input modes.
+    func color(forInputSource id: String?) -> NSColor? {
+        guard let id else { return nil }
+        return inputSourceColors.filter { id.hasPrefix($0.key) }.max { $0.key.count < $1.key.count }?.value
+    }
+}
+
+// MARK: - Input source
+
+func currentInputSourceID() -> String? {
+    let source = TISCopyCurrentKeyboardInputSource().takeRetainedValue()
+    guard let pointer = TISGetInputSourceProperty(source, kTISPropertyInputSourceID) else { return nil }
+    return Unmanaged<CFString>.fromOpaque(pointer).takeUnretainedValue() as String
+}
+
+func pillImage(text: String, color: NSColor) -> NSImage {
+    let attributes: [NSAttributedString.Key: Any] = [
+        .font: NSFont.menuBarFont(ofSize: 0),
+        .foregroundColor: NSColor.white,
+    ]
+    let textSize = (text as NSString).size(withAttributes: attributes)
+    let padding: CGFloat = 6
+    let size = NSSize(width: ceil(textSize.width) + padding * 2, height: ceil(textSize.height) + 2)
+    return NSImage(size: size, flipped: false) { rect in
+        color.setFill()
+        NSBezierPath(roundedRect: rect, xRadius: 5, yRadius: 5).fill()
+        (text as NSString).draw(at: NSPoint(x: padding, y: (rect.height - textSize.height) / 2), withAttributes: attributes)
+        return true
     }
 }
 
@@ -97,11 +155,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let reportBuffer = UnsafeMutablePointer<UInt8>.allocate(capacity: 64)
     private var settings = Settings.load()
     private var currentLayer: Int?   // nil = disconnected
+    private var inputSource = currentInputSourceID()
+    private let inputSourceItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
+        menu.addItem(inputSourceItem) // shows the ID to use in inputSourceColors
+        menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Open Config", action: #selector(openConfig), keyEquivalent: "o"))
         menu.addItem(NSMenuItem(title: "Reload Config", action: #selector(reloadConfig), keyEquivalent: "r"))
         menu.addItem(.separator())
@@ -110,8 +172,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.items.last?.target = nil
         statusItem.menu = menu
 
+        DistributedNotificationCenter.default().addObserver(
+            self, selector: #selector(inputSourceChanged),
+            name: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String), object: nil)
+
         render()
         startHID()
+    }
+
+    @objc private func inputSourceChanged() {
+        inputSource = currentInputSourceID()
+        render()
     }
 
     @objc private func openConfig() {
@@ -134,8 +205,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func render() {
         DispatchQueue.main.async {
-            let text = self.currentLayer.map { self.settings.name(forLayer: $0) } ?? self.settings.disconnectedText
-            self.statusItem.button?.title = self.settings.prefix + text
+            let text = self.settings.prefix
+                + (self.currentLayer.map { self.settings.name(forLayer: $0) } ?? self.settings.disconnectedText)
+            self.inputSourceItem.title = "Input: \(self.inputSource ?? "unknown")"
+            guard let button = self.statusItem.button else { return }
+            if let color = self.settings.color(forInputSource: self.inputSource) {
+                button.title = ""
+                button.image = pillImage(text: text, color: color)
+            } else {
+                button.image = nil
+                button.title = text
+            }
         }
     }
 
